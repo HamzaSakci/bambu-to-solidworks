@@ -1,0 +1,30 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "🌈 Bambu/STL -> SolidWorks RENKLİ WEB STÜDYOSU (Tarayıcı)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/web_app.py",
+            "console": "integratedTerminal",
+            "justMyCode": true
+        },
+        {
+            "name": "🖥️ Bambu/STL -> SolidWorks MASAÜSTÜ ARAYÜZÜ (GUI)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/app.py",
+            "console": "integratedTerminal",
+            "justMyCode": true
+        },
+        {
+            "name": "⚡ Hızlı CLI Dönüştürücü (Terminal)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/cli.py",
+            "args": ["--help"],
+            "console": "integratedTerminal",
+            "justMyCode": true
+        }
+    ]
+}

@@ -1,0 +1,18 @@
+# Python sanal ortam ve önbellek dosyaları
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*$py.class
+build/
+dist/
+*.spec
+
+# Geçici çıktı dosyaları (örnek girdiler hariç)
+output/*.step
+output/*.stp
+output/*.sldprt
+output/*.SLDPRT
+output/*.prt
+output/*.PRT
+output/*.zip

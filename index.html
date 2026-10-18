@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0" />
+    <title>Bambu Studio (.3MF / .STL) ➔ SolidWorks (.STEP / .SLDPRT / .PRT) Web Stüdyosu</title>
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@500;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <!-- Three.js & JSZip for 3D WebGL & Client-Side 3MF/STL/STEP Engine -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <link rel="stylesheet" href="static/css/style.css" />
+</head>
+<body>
+    <!-- Hareketli Renkli Aurora Arka Plan Işıkları -->
+    <div class="aurora-bg">
+        <div class="orb orb-green"></div>
+        <div class="orb orb-crimson"></div>
+        <div class="orb orb-cyan"></div>
+        <div class="orb orb-violet"></div>
+        <div class="grid-overlay"></div>
+    </div>
+
+    <!-- ÜST NAVİGASYON BARI -->
+    <header class="top-navbar glass-panel">
+        <div class="brand-area">
+            <div class="brand-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
+                    <polyline points="3.27 6.96 12 12.01 20.73 6.96"/>
+                    <line x1="12" y1="22.08" x2="12" y2="12"/>
+                </svg>
+            </div>
+            <div>
+                <div class="brand-title">
+                    <span class="grad-bambu">BAMBU (.3MF / .STL)</span>
+                    <span class="arrow-pill">➔</span>
+                    <span class="grad-sw">SOLIDWORKS (.STEP / .SLDPRT / .PRT)</span>
+                </div>
+                <p class="brand-subtitle">Düzlemsel Yüzey Birleştiricili (Sketchable B-Rep) 3B CAD Dönüştürme Stüdyosu</p>
+            </div>
+        </div>
+
+        <div class="nav-actions">
+            <div id="engineModePill" class="sw-status-pill" title="Çalışma Modu">
+                <span class="pulse-dot"></span>
+                <span id="engineModeText">7/24 Web & SolidWorks Motoru Aktif</span>
+            </div>
+
+            <button id="btnShowQrModal" class="btn-glass btn-qr" title="Telefondan Girmek İçin QR Kodu Göster">
+                📱 Telefondan Gir (QR)
+            </button>
+
+            <a id="btnDownloadDesktopApp" href="https://github.com/HamzaSakci/bambu-to-solidworks/archive/refs/heads/main.zip" class="btn-glass btn-download-app" title="Masaüstü Programını Bilgisayara İndir (.ZIP)">
+                💻 Programı İndir (PC)
+            </a>
+
+            <a href="https://github.com/HamzaSakci/bambu-to-solidworks" target="_blank" rel="noopener" class="btn-glass btn-github" title="GitHub Sayfasını Aç">
+                ⭐ GitHub
+            </a>
+
+            <button id="btnOpenFolder" class="btn-glass btn-folder hidden" title="Çıktı Klasörünü Windows Gezgini'nde Aç">
+                📂 Klasörü Aç
+            </button>
+        </div>
+    </header>
+
+    <!-- HIZLI ÖRNEK MODEL SEÇİCİ ŞERİDİ -->
+    <section class="samples-bar glass-panel">
+        <div class="samples-label">
+            <span class="sparkle-badge">✨ Hızlı Test Modelleri:</span>
+            <span>Hazır Bambu & STL parçalarını tek tıkla 3B sahneye yükleyin:</span>
+        </div>
+        <div id="sampleButtonsContainer" class="sample-pills">
+            <!-- JS ile doldurulur -->
+        </div>
+    </section>
+
+    <!-- ANA ÇALIŞMA ALANI (SOL: KONTROLLER, SAĞ: 3B WEBGL SAHNE & ÇIKTILAR) -->
+    <main class="studio-grid">
+        <!-- SOL SÜTUN -->
+        <section class="left-column">
+            <!-- 1. DOSYA YÜKLEME KARTI -->
+            <div class="card glass-panel card-upload">
+                <div class="card-header">
+                    <span class="step-badge badge-green">1</span>
+                    <h2>Bambu Studio (.3MF) veya .STL Dosyası Yükle</h2>
+                </div>
+
+                <div id="dropZone" class="drop-zone">
+                    <input type="file" id="fileInput" accept=".stl,.3mf,.obj,.ply" hidden />
+                    <div class="drop-icon-wrap">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                            <polyline points="17 8 12 3 7 8"/>
+                            <line x1="12" y1="3" x2="12" y2="15"/>
+                        </svg>
+                    </div>
+                    <h3 id="dropTitle">Dosyanızı Buraya Sürükleyin veya Dokunun</h3>
+                    <p id="dropSubtitle">Bambu Studio çok parçalı <strong>.3MF</strong>, Binary/ASCII <strong>.STL</strong> ve <strong>.OBJ</strong> desteklenir</p>
+                    <div class="format-chips">
+                        <span class="chip chip-green">.3MF Bambu</span>
+                        <span class="chip chip-cyan">.STL Mesh</span>
+                        <span class="chip chip-violet">.OBJ / .PLY</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 2. ÇIKTI FORMATLARI KARTI -->
+            <div class="card glass-panel card-formats">
+                <div class="card-header">
+                    <span class="step-badge badge-cyan">2</span>
+                    <h2>Üretilecek CAD Çıktı Formatlarını Seçin</h2>
+                </div>
+
+                <div class="format-cards-grid">
+                    <label class="fmt-card fmt-step active" id="cardFmtStep">
+                        <input type="checkbox" id="chkStep" checked />
+                        <div class="fmt-top">
+                            <span class="fmt-ext">.STEP</span>
+                            <span class="fmt-check">✔</span>
+                        </div>
+                        <div class="fmt-name">ISO-10303 AP214</div>
+                        <div class="fmt-desc">Çizim açılabilir analitik B-Rep katı modeli</div>
+                    </label>
+
+                    <label class="fmt-card fmt-sldprt active" id="cardFmtSldprt">
+                        <input type="checkbox" id="chkSldprt" checked />
+                        <div class="fmt-top">
+                            <span class="fmt-ext">.SLDPRT</span>
+                            <span class="fmt-check">✔</span>
+                        </div>
+                        <div class="fmt-name">SolidWorks Part</div>
+                        <div class="fmt-desc">SolidWorks parça dosyası çıktısı</div>
+                    </label>
+
+                    <label class="fmt-card fmt-prt active" id="cardFmtPrt">
+                        <input type="checkbox" id="chkPrt" checked />
+                        <div class="fmt-top">
+                            <span class="fmt-ext">.PRT</span>
+                            <span class="fmt-check">✔</span>
+                        </div>
+                        <div class="fmt-name">CAD Part</div>
+                        <div class="fmt-desc">NX / Creo / Evrensel CAD parça formatı</div>
+                    </label>
+                </div>
+            </div>
+
+            <!-- 3. GEOMETRİ VE YÜZEY BİRLEŞTİRME AYARLARI -->
+            <div class="card glass-panel card-settings">
+                <div class="card-header">
+                    <span class="step-badge badge-violet">3</span>
+                    <h2>Akıllı Yüzey Birleştirme & SolidWorks Ayarları</h2>
+                </div>
+
+                <!-- Coplanar Merging Toggle -->
+                <div class="setting-row highlight-row">
+                    <div class="setting-info">
+                        <div class="setting-title">
+                            📐 Düzlemsel Üçgenleri Birleştir (Coplanar Face Merging)
+                            <span class="rec-tag">ÖNERİLEN</span>
+                        </div>
+                        <div class="setting-desc">
+                            Düz yüzeylerdeki yüzlerce üçgeni tek bir analitik düzleme (<code>PLANE</code>) çevirir. SolidWorks'te yüzeye sağ tıklayıp <strong>"Çizim Aç"</strong> diyebilirsiniz.
+                        </div>
+                    </div>
+                    <label class="switch">
+                        <input type="checkbox" id="chkMergeCoplanar" checked />
+                        <span class="slider"></span>
+                    </label>
+                </div>
+
+                <!-- Angle Tolerance Slider -->
+                <div class="setting-block">
+                    <div class="setting-label-line">
+                        <span>Düzlemsel Birleştirme Açı Toleransı:</span>
+                        <span id="angleValueBadge" class="val-pill">1.0°</span>
+                    </div>
+                    <input type="range" id="rngAngle" min="0.2" max="5.0" step="0.2" value="1.0" class="colorful-range" />
+                    <div class="range-hints">
+                        <span>0.2° (Hassas Düzlem)</span>
+                        <span>1.0° (İdeal)</span>
+                        <span>5.0° (Agresif Birleştirme)</span>
+                    </div>
+                </div>
+
+                <!-- Max Faces Selector -->
+                <div class="setting-block">
+                    <div class="setting-label-line">
+                        <span>Maksimum Üçgen / Yüzey Sınırı (Yüksek Poligonlu Modeller):</span>
+                    </div>
+                    <div class="seg-group" id="maxFacesGroup">
+                        <button type="button" class="seg-btn" data-val="10000">⚡ 10.000 (Hızlı)</button>
+                        <button type="button" class="seg-btn active" data-val="25000">⭐ 25.000 (İdeal Katı)</button>
+                        <button type="button" class="seg-btn" data-val="50000">🔍 50.000 (Detaylı)</button>
+                        <button type="button" class="seg-btn" data-val="0">♾️ Sınırsız</button>
+                    </div>
+                </div>
+
+                <!-- Auto Open in SolidWorks Toggle (Visible in Local PC Mode) -->
+                <div id="rowOpenSwAfter" class="setting-row sw-open-row">
+                    <div class="setting-info">
+                        <div class="setting-title">🚀 Dönüştürme Bitince SolidWorks Ekranında Otomatik Aç</div>
+                        <div class="setting-desc">Masaüstü modunda işlem tamamlandığında modeli SolidWorks penceresinde açar.</div>
+                    </div>
+                    <label class="switch switch-crimson">
+                        <input type="checkbox" id="chkOpenSwAfter" checked />
+                        <span class="slider"></span>
+                    </label>
+                </div>
+
+                <!-- DÖNÜŞTÜRME BUTONU -->
+                <button id="btnConvert" class="btn-convert-hero">
+                    <span class="btn-glow"></span>
+                    <span id="btnConvertText">🚀 DÖNÜŞTÜRMEYİ BAŞLAT (.STEP / .SLDPRT / .PRT)</span>
+                </button>
+
+                <!-- İlerleme Çubuğu -->
+                <div id="progressContainer" class="progress-wrap hidden">
+                    <div class="progress-top">
+                        <span id="progressStatusText">Dönüştürülüyor...</span>
+                        <span id="progressPercentText">0%</span>
+                    </div>
+                    <div class="progress-track">
+                        <div id="progressBarFill" class="progress-fill"></div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- SAĞ SÜTUN: 3B ETKİLEŞİMLİ WEBGL GÖRÜNTÜLEYİCİ + İSTATİSTİKLER + İNDİRME MERKEZİ -->
+        <section class="right-column">
+            <!-- 3B WEBGL VIEWPORT KARTI -->
+            <div class="card glass-panel card-viewer">
+                <div class="viewer-header">
+                    <div class="viewer-title-group">
+                        <span class="live-3d-badge">3D WEBGL</span>
+                        <h2 id="viewerFileName">Önizleme Yükleniyor...</h2>
+                    </div>
+
+                    <!-- Renk Teması Seçici & Görünüm Kontrolleri -->
+                    <div class="viewer-toolbar">
+                        <div class="color-swatches" title="3B Model Renk Temasını Değiştir">
+                            <button class="swatch active" data-color="#00e676" style="background: linear-gradient(135deg,#00e676,#00b4d8);" title="Bambu Zümrüt Yeşili"></button>
+                            <button class="swatch" data-color="#ff4757" style="background: linear-gradient(135deg,#ff4757,#ff7f50);" title="SolidWorks Kızılı"></button>
+                            <button class="swatch" data-color="#00d2ff" style="background: linear-gradient(135deg,#00d2ff,#3a7bd5);" title="Siber Titanyum Mavisi"></button>
+                            <button class="swatch" data-color="#ffb703" style="background: linear-gradient(135deg,#ffb703,#fb8500);" title="Endüstriyel Altın"></button>
+                            <button class="swatch" data-color="#a855f7" style="background: linear-gradient(135deg,#a855f7,#ec4899);" title="Neon Ametist"></button>
+                        </div>
+
+                        <div class="view-toggles">
+                            <button id="btnToggleWireframe" class="tool-btn active" title="Kenar Çizgilerini (CAD Edges) Göster/Gizle">🕸️ Kenarlar</button>
+                            <button id="btnToggleAutoRotate" class="tool-btn active" title="Otomatik Döndürmeyi Aç/Kapat">🔄 Döndür</button>
+                            <button id="btnResetCamera" class="tool-btn" title="Kamerayı Merkeze Odakla">🎯 Odakla</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Three.js Canvas Container -->
+                <div id="threeContainer" class="three-canvas-wrap">
+                    <div id="viewerEmptyOverlay" class="viewer-empty">
+                        <div class="cube-loader">📦</div>
+                        <p>Sol panelden bir <strong>.3MF</strong> veya <strong>.STL</strong> dosyası seçin veya sürükleyin</p>
+                    </div>
+                    <div class="viewer-hud-bottom">
+                        <span>🖱️/👆 <strong>Sürükle:</strong> 360° Döndür</span>
+                        <span>🖱️/✌️ <strong>Kaydır:</strong> Pan</span>
+                        <span>🖱️/🤏 <strong>Yakınlaştır:</strong> Zoom</span>
+                    </div>
+                </div>
+
+                <!-- 4 RENKLİ CAD METRİK KARTI -->
+                <div class="metrics-grid">
+                    <div class="metric-card m-cyan">
+                        <div class="m-label">📏 Parça Boyutları (X × Y × Z)</div>
+                        <div class="m-value" id="metricDims">— × — × — mm</div>
+                        <div class="m-sub" id="metricAreaVol">Alan: — cm² | Hacim: — cm³</div>
+                    </div>
+
+                    <div class="metric-card m-amber">
+                        <div class="m-label">🔺 Orijinal Mesh Ağ Yapısı</div>
+                        <div class="m-value" id="metricTriangles">0 Üçgen</div>
+                        <div class="m-sub" id="metricVertices">0 Köşe Noktası</div>
+                    </div>
+
+                    <div class="metric-card m-emerald">
+                        <div class="m-label">✨ Birleşik Analitik CAD Yüzeyi</div>
+                        <div class="m-value" id="metricCadFaces">— Yüzey</div>
+                        <div class="m-sub" id="metricReduction">Dönüştürme sonrası hesaplanır</div>
+                    </div>
+
+                    <div class="metric-card m-violet">
+                        <div class="m-label">🛡️ Katı Gövde & Topoloji</div>
+                        <div class="m-value" id="metricWatertight">Bekleniyor</div>
+                        <div class="m-sub" id="metricElapsed">Hazır</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- İNDİRME VE SOLIDWORKS AKSİYON MERKEZİ -->
+            <div class="card glass-panel card-outputs">
+                <div class="outputs-header">
+                    <div>
+                        <h2>🎁 Üretilen CAD Dosyaları & Masaüstü İndirme Merkezi</h2>
+                        <p id="outputsSubtitle">Dönüştürülen .STEP, .SLDPRT ve .PRT dosyalarını buradan indirebilir veya doğrudan SolidWorks'te açabilirsiniz.</p>
+                    </div>
+                    <button id="btnOpenInSwDirect" class="btn-sw-direct hidden">
+                        🔧 Seçili Parçayı SolidWorks'te Aç
+                    </button>
+                </div>
+
+                <div id="downloadsGrid" class="downloads-grid">
+                    <!-- JS ile üretilen indirme kartları buraya gelir -->
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <!-- TELEFONDAN GİRİŞ (QR KOD) VE PROGRAM İNDİRME MODALI -->
+    <div id="qrModal" class="modal-backdrop hidden">
+        <div class="modal-card glass-panel">
+            <div class="modal-header">
+                <h3>📱 Telefondan & Her Yerden Giriş + Bilgisayar Programı</h3>
+                <button id="btnCloseQrModal" class="modal-close">✖</button>
+            </div>
+            <div class="modal-body">
+                <div class="qr-box">
+                    <img id="qrImage" src="https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=https://hamzasakci.github.io/bambu-to-solidworks/" alt="QR Kod" />
+                </div>
+                <p class="modal-lead">Telefonunuzun kamerasını QR koda tutarak veya aşağıdaki linke tıklayarak <strong>7/24 her yerden</strong> web sitesine girebilirsiniz:</p>
+                <a id="publicUrlLink" href="https://hamzasakci.github.io/bambu-to-solidworks/" target="_blank" class="url-pill">
+                    🌍 https://hamzasakci.github.io/bambu-to-solidworks/
+                </a>
+                <div id="lanUrlBox" class="lan-box hidden">
+                    <span>📡 Aynı Wi-Fi Üzerinden Yerel Bilgisayar Bağlantısı:</span>
+                    <strong id="lanUrlText">http://192.168.1.x:5050</strong>
+                </div>
+                <hr class="modal-divider" />
+                <div class="desktop-promo">
+                    <h4>💻 Bilgisayara Program Olarak İndirmek İster misiniz?</h4>
+                    <p>Programı bilgisayarınıza indirip <code>Kur_ve_Calistir.bat</code> dosyasına çift tıklayarak hem Masaüstü Uygulamasını hem de doğrudan SolidWorks 2026 COM bağlantısını kullanabilirsiniz.</p>
+                    <a href="https://github.com/HamzaSakci/bambu-to-solidworks/archive/refs/heads/main.zip" class="btn-convert-hero btn-modal-dl">
+                        📥 Windows Masaüstü Programını İndir (.ZIP)
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Bildirim Toast Kutusu -->
+    <div id="toastContainer" class="toast-container"></div>
+
+    <script src="static/js/app.js"></script>
+</body>
+</html>
