@@ -615,9 +615,10 @@ function buildStepAp214ClientSide(verts, faces, partName, mergeCoplanar, angleTo
 
 function initClientSideSamples() {
     const demoSamples = [
-        { name: "bambu_flans_adaptor.stl", ext: "STL", type: "flange" },
-        { name: "ornek_bambu_proje.3mf", ext: "3MF", type: "box" },
-        { name: "mekanik_montaj_braketi.stl", ext: "STL", type: "bracket" },
+        { name: "1_NEMA17_Step_Motor_Tutucu.stl", ext: "STL", url: "input/1_NEMA17_Step_Motor_Tutucu.stl", type: "bracket" },
+        { name: "4_PCB_Sikistirma_Kelepcesi.stl", ext: "STL", url: "input/4_PCB_Sikistirma_Kelepcesi.stl", type: "flange" },
+        { name: "bambu_flans_adaptor.stl", ext: "STL", url: "input/bambu_flans_adaptor.stl", type: "flange" },
+        { name: "ornek_bambu_proje.3mf", ext: "3MF", url: "input/ornek_bambu_proje.3mf", type: "box" },
     ];
     const container = document.getElementById("sampleButtonsContainer");
     container.innerHTML = "";
@@ -636,7 +637,33 @@ function initClientSideSamples() {
     loadClientDemo(demoSamples[0]);
 }
 
-function loadClientDemo(sample) {
+async function loadClientDemo(sample) {
+    if (sample.url) {
+        try {
+            const res = await fetch(sample.url);
+            if (res.ok) {
+                const buf = await res.arrayBuffer();
+                const parsed = sample.ext === "3MF" ? await parse3mfArrayBuffer(buf) : parseStlArrayBuffer(buf);
+                applyLoadedFile({
+                    filename: sample.name,
+                    extension: sample.ext.toLowerCase(),
+                    file_size_kb: +(buf.byteLength / 1024.0).toFixed(1),
+                    triangles: parsed.faces.length,
+                    vertices_count: parsed.uniqueVerts.length,
+                    is_watertight: true,
+                    dimensions_mm: parsed.dimensions_mm,
+                    surface_area_cm2: parsed.surface_area_cm2,
+                    volume_cm3: parsed.volume_cm3,
+                    mesh_data: parsed.mesh_data,
+                    _rawVerts: parsed.uniqueVerts,
+                    _rawFaces: parsed.faces,
+                });
+                return;
+            }
+        } catch (_) {
+            // Statik dosya çekilemezse prosedürel modele düş
+        }
+    }
     const parsed = generateClientDemoMesh(sample.type);
     applyLoadedFile({
         filename: sample.name,
