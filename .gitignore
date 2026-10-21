@@ -8,11 +8,5 @@ build/
 dist/
 *.spec
 
-# Geçici çıktı dosyaları (örnek girdiler hariç)
-output/*.step
-output/*.stp
-output/*.sldprt
-output/*.SLDPRT
-output/*.prt
-output/*.PRT
+# Geçici ZIP paketleri
 output/*.zip

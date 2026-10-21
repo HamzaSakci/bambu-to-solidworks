@@ -11,6 +11,7 @@ let activeColorHex = "#00e676";
 let showEdges = true;
 let autoRotate = true;
 let isLocalBackend = false;
+let apiBaseUrl = "";
 
 // Three.js değişkenleri
 let scene, camera, renderer, controls, meshGroup, mainMesh, edgeLines;
@@ -163,33 +164,38 @@ function fitCameraToMesh(geometry) {
    2. HİBRİT MOTOR TESPİTİ (YEREL PC vs 7/24 GITHUB PAGES WEB)
    ---------------------------------------------------------------------------- */
 async function detectBackendAndInit() {
-    try {
-        const ctrl = new AbortController();
-        const tid = setTimeout(() => ctrl.abort(), 1400);
-        const res = await fetch("/api/info", { signal: ctrl.signal });
-        clearTimeout(tid);
-        if (res.ok) {
-            const info = await res.json();
-            isLocalBackend = true;
-            document.getElementById("engineModeText").textContent = "SolidWorks 2026 Masaüstü Bağlantısı Aktif";
-            document.getElementById("btnOpenFolder").classList.remove("hidden");
-            document.getElementById("btnOpenInSwDirect").classList.remove("hidden");
-            if (info.lan_url) {
-                const lanBox = document.getElementById("lanUrlBox");
-                const lanTxt = document.getElementById("lanUrlText");
-                if (lanBox && lanTxt) {
-                    lanBox.classList.remove("hidden");
-                    lanTxt.textContent = info.lan_url;
+    const candidateBases = ["", "http://127.0.0.1:5050"];
+    for (const base of candidateBases) {
+        try {
+            const ctrl = new AbortController();
+            const tid = setTimeout(() => ctrl.abort(), 1500);
+            const res = await fetch(`${base}/api/info`, { signal: ctrl.signal });
+            clearTimeout(tid);
+            if (res.ok) {
+                const info = await res.json();
+                isLocalBackend = true;
+                apiBaseUrl = base;
+                document.getElementById("engineModeText").textContent = "SolidWorks 2026 Masaüstü Bağlantısı Aktif";
+                document.getElementById("btnOpenFolder").classList.remove("hidden");
+                document.getElementById("btnOpenInSwDirect").classList.remove("hidden");
+                if (info.lan_url) {
+                    const lanBox = document.getElementById("lanUrlBox");
+                    const lanTxt = document.getElementById("lanUrlText");
+                    if (lanBox && lanTxt) {
+                        lanBox.classList.remove("hidden");
+                        lanTxt.textContent = info.lan_url;
+                    }
                 }
+                await loadSamplesFromLocalServer();
+                return;
             }
-            await loadSamplesFromLocalServer();
-            return;
+        } catch (_) {
+            // Sonraki adresi dene
         }
-    } catch (_) {
-        // GitHub Pages veya statik sunucu modu
     }
 
     isLocalBackend = false;
+    apiBaseUrl = "";
     document.getElementById("engineModeText").textContent = "7/24 WebCAD Bulut Motoru Aktif";
     document.getElementById("rowOpenSwAfter").classList.add("hidden");
     initClientSideSamples();
@@ -789,7 +795,7 @@ function bindUIEvents() {
 
     // Klasör ve SolidWorks Aksiyon Butonları
     document.getElementById("btnOpenFolder").addEventListener("click", async () => {
-        const res = await fetch("/api/open-folder", { method: "POST" });
+        const res = await fetch(`${apiBaseUrl}/api/open-folder`, { method: "POST" });
         const data = await res.json();
         showToast(data.message || "Çıktı klasörü açıldı.");
     });
@@ -805,7 +811,7 @@ function bindUIEvents() {
    ---------------------------------------------------------------------------- */
 async function loadSamplesFromLocalServer() {
     try {
-        const res = await fetch("/api/samples");
+        const res = await fetch(`${apiBaseUrl}/api/samples`);
         const data = await res.json();
 
         const container = document.getElementById("sampleButtonsContainer");
@@ -834,7 +840,7 @@ async function loadSamplesFromLocalServer() {
                     format: o.ext,
                     filename: o.name,
                     size_kb: o.size_kb,
-                    url: o.url,
+                    url: o.url.startsWith("/") ? `${apiBaseUrl}${o.url}` : o.url,
                 }))
             );
         }
@@ -845,7 +851,7 @@ async function loadSamplesFromLocalServer() {
 
 async function selectSampleModel(sampleName) {
     try {
-        const res = await fetch("/api/upload", {
+        const res = await fetch(`${apiBaseUrl}/api/upload`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ sample_name: sampleName }),
@@ -868,7 +874,7 @@ async function uploadSelectedFile(fileObj) {
         const formData = new FormData();
         formData.append("file", fileObj);
         try {
-            const res = await fetch("/api/upload", { method: "POST", body: formData });
+            const res = await fetch(`${apiBaseUrl}/api/upload`, { method: "POST", body: formData });
             const data = await res.json();
             if (data.success) {
                 applyLoadedFile(data.file);
@@ -997,7 +1003,7 @@ async function startConversion() {
                 open_in_solidworks: document.getElementById("chkOpenSwAfter").checked,
             };
 
-            const res = await fetch("/api/convert", {
+            const res = await fetch(`${apiBaseUrl}/api/convert`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(payload),
@@ -1015,7 +1021,11 @@ async function startConversion() {
                 document.getElementById("metricReduction").textContent = `%${st.reduction_pct} Yüzey Sadeleştirmesi`;
                 document.getElementById("metricElapsed").textContent = `Süre: ${st.elapsed_sec} saniye`;
 
-                renderDownloadCards(data.downloads);
+                const fixedDownloads = (data.downloads || []).map((d) => ({
+                    ...d,
+                    url: d.url.startsWith("/") ? `${apiBaseUrl}${d.url}` : d.url,
+                }));
+                renderDownloadCards(fixedDownloads);
                 showToast(`🎉 ${data.message}`);
             } else {
                 progStatus.textContent = "❌ Hata oluştu";
@@ -1056,37 +1066,64 @@ async function startConversion() {
         const zip = new JSZip();
         const sizeKb = +(new Blob([stepText]).size / 1024.0).toFixed(1);
 
-        if (expStep) {
-            const blob = new Blob([stepText], { type: "application/step" });
-            downloads.push({
-                format: "STEP",
-                filename: `${stem}.step`,
-                size_kb: sizeKb,
-                url: URL.createObjectURL(blob),
-            });
-            zip.file(`${stem}.step`, stepText);
-        }
+        // Her zaman geçerli ISO-10303-21 .STEP dosyasını oluştur (SolidWorks doğrudan hatasız açar)
+        const stepBlob = new Blob([stepText], { type: "application/step" });
+        downloads.push({
+            format: "STEP (SolidWorks Uyumlu)",
+            filename: `${stem}.step`,
+            size_kb: sizeKb,
+            url: URL.createObjectURL(stepBlob),
+        });
+        zip.file(`${stem}.step`, stepText);
 
+        // Önceden SolidWorks 2026 ile üretilmiş gerçek ikili (binary) .SLDPRT ve .PRT var mı kontrol et
         if (expSldprt) {
-            const blob = new Blob([stepText], { type: "application/octet-stream" });
-            downloads.push({
-                format: "SLDPRT",
-                filename: `${stem}.sldprt`,
-                size_kb: sizeKb,
-                url: URL.createObjectURL(blob),
-            });
-            zip.file(`${stem}.sldprt`, stepText);
+            let foundBinarySldprt = false;
+            for (const candExt of ["SLDPRT", "sldprt"]) {
+                try {
+                    const r = await fetch(`output/${stem}.${candExt}`);
+                    if (r.ok) {
+                        const b = await r.blob();
+                        if (b.size > 1000) {
+                            downloads.push({
+                                format: "SLDPRT",
+                                filename: `${stem}.SLDPRT`,
+                                size_kb: +(b.size / 1024.0).toFixed(1),
+                                url: URL.createObjectURL(b),
+                            });
+                            zip.file(`${stem}.SLDPRT`, b);
+                            foundBinarySldprt = true;
+                            break;
+                        }
+                    }
+                } catch (_) {}
+            }
+            if (!foundBinarySldprt) {
+                showToast("ℹ️ Tarayıcı modunda SolidWorks için .STEP üretildi (SolidWorks'te doğrudan açılır). Yerel .SLDPRT için masaüstü servisini kullanın.");
+            }
         }
 
         if (expPrt) {
-            const blob = new Blob([stepText], { type: "application/octet-stream" });
-            downloads.push({
-                format: "PRT",
-                filename: `${stem}.prt`,
-                size_kb: sizeKb,
-                url: URL.createObjectURL(blob),
-            });
-            zip.file(`${stem}.prt`, stepText);
+            let foundBinaryPrt = false;
+            for (const candExt of ["PRT", "prt"]) {
+                try {
+                    const r = await fetch(`output/${stem}.${candExt}`);
+                    if (r.ok) {
+                        const b = await r.blob();
+                        if (b.size > 1000) {
+                            downloads.push({
+                                format: "PRT",
+                                filename: `${stem}.PRT`,
+                                size_kb: +(b.size / 1024.0).toFixed(1),
+                                url: URL.createObjectURL(b),
+                            });
+                            zip.file(`${stem}.PRT`, b);
+                            foundBinaryPrt = true;
+                            break;
+                        }
+                    }
+                } catch (_) {}
+            }
         }
 
         if (downloads.length > 1) {
@@ -1153,7 +1190,7 @@ function renderDownloadCards(downloads) {
 async function openInSolidWorks(filename) {
     showToast(`🔧 ${filename} SolidWorks 2026'da açılıyor...`);
     try {
-        const res = await fetch("/api/open-solidworks", {
+        const res = await fetch(`${apiBaseUrl}/api/open-solidworks`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ filename }),

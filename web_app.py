@@ -51,6 +51,31 @@ app = Flask(
 app.config["MAX_CONTENT_LENGTH"] = 250 * 1024 * 1024  # 250 MB maksimum dosya boyutu
 
 
+@app.after_request
+def add_cors_and_pna_headers(response):
+    """
+    GitHub Pages (https://hamzasakci.github.io/bambu-to-solidworks/) üzerinden
+    yerel SolidWorks sunucusuna (http://127.0.0.1:5050) doğrudan bağlanabilmesi için
+    CORS ve Private Network Access (PNA) başlıklarını ekler.
+    """
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+    response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization, X-Requested-With"
+    response.headers["Access-Control-Allow-Private-Network"] = "true"
+    return response
+
+
+@app.before_request
+def handle_preflight():
+    if request.method == "OPTIONS":
+        resp = app.make_default_options_response()
+        resp.headers["Access-Control-Allow-Origin"] = "*"
+        resp.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+        resp.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization, X-Requested-With"
+        resp.headers["Access-Control-Allow-Private-Network"] = "true"
+        return resp
+
+
 def ensure_demo_models() -> None:
     """Kullanıcının tek tıkla test edebilmesi için örnek mekanik Bambu parçaları oluşturur."""
     demo_stl = INPUT_DIR / "bambu_flans_adaptor.stl"
