@@ -867,8 +867,32 @@ async function selectSampleModel(sampleName) {
     }
 }
 
+async function tryConnectLocalBridge() {
+    if (isLocalBackend) return true;
+    for (const base of ["", "http://127.0.0.1:5050"]) {
+        try {
+            const ctrl = new AbortController();
+            const tid = setTimeout(() => ctrl.abort(), 1200);
+            const res = await fetch(`${base}/api/info`, { signal: ctrl.signal });
+            clearTimeout(tid);
+            if (res.ok) {
+                isLocalBackend = true;
+                apiBaseUrl = base;
+                document.getElementById("engineModeText").textContent = "SolidWorks 2026 Masaüstü Bağlantısı Aktif";
+                document.getElementById("btnOpenFolder").classList.remove("hidden");
+                document.getElementById("btnOpenInSwDirect").classList.remove("hidden");
+                document.getElementById("rowOpenSwAfter").classList.remove("hidden");
+                return true;
+            }
+        } catch (_) {}
+    }
+    return false;
+}
+
 async function uploadSelectedFile(fileObj) {
     document.getElementById("dropTitle").textContent = `⏳ '${fileObj.name}' Analiz Ediliyor...`;
+
+    await tryConnectLocalBridge();
 
     if (isLocalBackend) {
         const formData = new FormData();
@@ -877,12 +901,13 @@ async function uploadSelectedFile(fileObj) {
             const res = await fetch(`${apiBaseUrl}/api/upload`, { method: "POST", body: formData });
             const data = await res.json();
             if (data.success) {
+                data.file._fileBlob = fileObj;
                 applyLoadedFile(data.file);
                 showToast(`✅ ${data.file.filename} 3B sahneye yüklendi!`);
+                return;
             } else {
                 showToast(data.error || "Dosya yüklenemedi", true);
             }
-            return;
         } catch (_) {
             // Sunucu yanıt vermezse tarayıcı motoruna düş
         }
@@ -911,6 +936,7 @@ async function uploadSelectedFile(fileObj) {
             mesh_data: parsed.mesh_data,
             _rawVerts: parsed.uniqueVerts,
             _rawFaces: parsed.faces,
+            _fileBlob: fileObj,
         });
         showToast(`✅ ${fileObj.name} 3B sahneye yüklendi!`);
     } catch (err) {
@@ -970,6 +996,22 @@ async function startConversion() {
     btnConvert.disabled = true;
     btnText.textContent = "⏳ CAD YÜZEYLERİ BİRLEŞTİRİLİYOR VE ÇIKTILAR ÜRETİLİYOR...";
     progWrap.classList.remove("hidden");
+
+    // Dönüştürmeden hemen önce yerel SolidWorks servisi (http://127.0.0.1:5050) aktif mi kontrol et
+    if (!isLocalBackend) {
+        const connected = await tryConnectLocalBridge();
+        if (connected && currentFile._fileBlob) {
+            try {
+                const fd = new FormData();
+                fd.append("file", currentFile._fileBlob);
+                const upRes = await fetch(`${apiBaseUrl}/api/upload`, { method: "POST", body: fd });
+                const upData = await upRes.json();
+                if (upData.success && upData.file) {
+                    currentFile.filename = upData.file.filename;
+                }
+            } catch (_) {}
+        }
+    }
 
     // 1. YEREL MASAÜSTÜ SUNUCU MODU (Flask + SolidWorks COM)
     if (isLocalBackend) {

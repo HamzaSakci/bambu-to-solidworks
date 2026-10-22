@@ -23,7 +23,21 @@ import trimesh
 from flask import Flask, jsonify, render_template, request, send_from_directory
 from werkzeug.utils import secure_filename
 
-if hasattr(sys.stdout, "reconfigure"):
+BASE_DIR = Path(__file__).resolve().parent
+INPUT_DIR = BASE_DIR / "input"
+OUTPUT_DIR = BASE_DIR / "output"
+INPUT_DIR.mkdir(parents=True, exist_ok=True)
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+# pythonw.exe (arka plan penceresiz mod) altında stdout/stderr None olduğunda
+# Flask/Werkzeug loglarının çökmemesi için server.log dosyasına yönlendir
+if sys.stdout is None or sys.stderr is None:
+    _log_file = open(BASE_DIR / "server.log", "a", encoding="utf-8", buffering=1)
+    if sys.stdout is None:
+        sys.stdout = _log_file
+    if sys.stderr is None:
+        sys.stderr = _log_file
+elif hasattr(sys.stdout, "reconfigure"):
     try:
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
         sys.stderr.reconfigure(encoding="utf-8", errors="replace")
@@ -36,12 +50,6 @@ from converter_engine import (
     load_mesh_file,
     open_file_in_solidworks,
 )
-
-BASE_DIR = Path(__file__).resolve().parent
-INPUT_DIR = BASE_DIR / "input"
-OUTPUT_DIR = BASE_DIR / "output"
-INPUT_DIR.mkdir(parents=True, exist_ok=True)
-OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 app = Flask(
     __name__,
@@ -218,7 +226,13 @@ def upload_or_select_file():
                 {"success": False, "error": f"Desteklenmeyen dosya uzantısı ({ext}). Lütfen .STL veya .3MF yükleyin."}
             ), 400
 
-        safe_stem = secure_filename(Path(orig_name).stem) or "bambu_model"
+        raw_stem = Path(orig_name).stem
+        tr_map = str.maketrans("çğıöşüÇĞİÖŞÜ", "cgiosuCGIOSU")
+        safe_stem = secure_filename(raw_stem.translate(tr_map))
+        if not safe_stem:
+            import hashlib
+            short_h = hashlib.md5(raw_stem.encode("utf-8", errors="ignore")).hexdigest()[:6]
+            safe_stem = f"bambu_model_{short_h}"
         save_path = INPUT_DIR / f"{safe_stem}{ext}"
         up_file.save(str(save_path))
 

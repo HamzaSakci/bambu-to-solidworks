@@ -722,6 +722,15 @@ def _fmt_float(val: float) -> str:
     return s
 
 
+def _to_ascii_identifier(text: str) -> str:
+    """Türkçe ve Unicode karakterleri STEP standardına uygun 7-bit ASCII tanımlayıcıya dönüştürür."""
+    tr_map = str.maketrans("çğıöşüÇĞİÖŞÜ", "cgiosuCGIOSU")
+    mapped = text.translate(tr_map)
+    cleaned = "".join(ch if (ch.isascii() and (ch.isalnum() or ch in ("_", "-"))) else "_" for ch in mapped)
+    cleaned = cleaned.strip("_")
+    return cleaned or "Bambu_Part"
+
+
 def export_step_ap214(
     vertices: np.ndarray,
     planar_faces: List[PlanarFace],
@@ -735,9 +744,9 @@ def export_step_ap214(
     - step_mode="advanced_brep": ADVANCED_BREP_SHAPE_REPRESENTATION (ADVANCED_FACE + PLANE + EDGE_CURVE + LINE)
       SolidWorks'te her düz yüzeyde doğrudan 2B çizim (Sketch) açılmasına ve kenar ölçümü yapılmasına olanak tanır.
     - step_mode="faceted_brep": FACETED_BREP (POLY_LOOP + FACE_SURFACE + PLANE)
-      Çok yüksek yüzeyli modellerde daha küçük dosya boyutu sağlar.
+      Çok yüksek yüzeyli modellerde daha küçük dosya boyutu ve hızlı SolidWorks içe aktarımı sağlar.
     """
-    safe_part_name = "".join(ch if ch.isalnum() or ch in ("_", "-") else "_" for ch in part_name) or "Bambu_Part"
+    safe_part_name = _to_ascii_identifier(part_name)
     timestamp = time.strftime("%Y-%m-%dT%H:%M:%S")
 
     lines: List[str] = []
@@ -793,7 +802,9 @@ def export_step_ap214(
 
     cart_pt_ids: Dict[int, int] = {}
     vert_pt_ids: Dict[int, int] = {}
-    use_advanced = step_mode.lower() != "faceted_brep"
+    # 1500 yüzeyden büyük organik/yüksek poligonlu modellerde SolidWorks'ün hızlıca
+    # Katı Gövde oluşturabilmesi için otomatik olarak FACETED_BREP modunu kullan
+    use_advanced = (step_mode.lower() != "faceted_brep") and (len(planar_faces) <= 1500)
 
     for v_idx in sorted(used_verts):
         vx, vy, vz = float(vertices[v_idx, 0]), float(vertices[v_idx, 1]), float(vertices[v_idx, 2])
@@ -913,7 +924,7 @@ def export_step_ap214(
     header = f"""ISO-10303-21;
 HEADER;
 FILE_DESCRIPTION(('Bambu/STL to SolidWorks STEP AP214 Converter'),'2;1');
-FILE_NAME('{Path(output_path).name}','{timestamp}',('User'),('Bambu2SolidWorks'),'Bambu2SolidWorks Engine 1.0','SolidWorks','');
+FILE_NAME('{safe_part_name}.step','{timestamp}',('User'),('Bambu2SolidWorks'),'Bambu2SolidWorks Engine 1.0','SolidWorks','');
 FILE_SCHEMA(('AUTOMOTIVE_DESIGN {{ 1 0 10303 214 1 1 1 1 }}'));
 ENDSEC;
 DATA;
@@ -938,13 +949,16 @@ def convert_with_solidworks(
     out_prt_path: Optional[str],
     open_after: bool = False,
     import_mode: str = "step_brep",
+    fallback_mesh: Optional[trimesh.Trimesh] = None,
 ) -> Tuple[Dict[str, str], List[str]]:
     """
     Bilgisayarda kurulu olan SolidWorks (SldWorks.Application) COM bağlantısını kullanarak:
-    - Üretilen .STEP dosyasını (veya doğrudan .STL dosyasını Katı Gövde modunda) SolidWorks'e aktarır.
-    - Yerel .SLDPRT ve .PRT formatlarında kaydeder.
+    - Türkçe / Çince / Unicode karakterli dosya yollarında SolidWorks ANSI okuyucusunun hata vermemesi için
+      geçici ASCII çalışma yolu (TEMP) üzerinden .STEP dosyasını SolidWorks'e aktarır.
+    - Yerel .SLDPRT ve .PRT formatlarında kaydeder ve hedef yola taşır.
     - open_after=True ise SolidWorks penceresini görünür yapıp modeli ekrana odaklar.
     """
+    import tempfile
     saved: Dict[str, str] = {}
     warnings: List[str] = []
 
@@ -957,6 +971,13 @@ def convert_with_solidworks(
         return saved, warnings
 
     pythoncom.CoInitialize()
+    tmp_dir = Path(tempfile.gettempdir())
+    uid = f"bambu2sw_{os.getpid()}_{int(time.time() * 1000) % 100000}"
+    tmp_step = tmp_dir / f"{uid}.step"
+    tmp_stl = tmp_dir / f"{uid}.stl"
+    tmp_sldprt = tmp_dir / f"{uid}.sldprt"
+    tmp_prt = tmp_dir / f"{uid}.prt"
+
     try:
         sw_app = win32com.client.Dispatch("SldWorks.Application")
         # 3D Interconnect'i geçici olarak kapat (doğrudan düzenlenebilir B-Rep gövde oluşması için)
@@ -976,36 +997,43 @@ def convert_with_solidworks(
             pass
 
         abs_step = str(Path(step_path).resolve())
+        shutil.copy2(abs_step, str(tmp_step))
         model_doc = None
 
-        # 1. STEP dosyasını SolidWorks'e yükle (VT_DISPATCH None ve 'r' argümanı ile Err=0)
+        # 1. Aşama: ASCII geçici yoldaki STEP dosyasını SolidWorks'e yükle
         try:
             imp_var = VARIANT(pythoncom.VT_DISPATCH, None)
             err_var = VARIANT(pythoncom.VT_BYREF | pythoncom.VT_I4, 0)
-            model_doc = sw_app.LoadFile4(abs_step, "r", imp_var, err_var)
+            model_doc = sw_app.LoadFile4(str(tmp_step), "r", imp_var, err_var)
         except Exception as e_load:
-            warnings.append(f"SolidWorks LoadFile4 uyarısı: {e_load}")
+            warnings.append(f"SolidWorks STEP LoadFile4 uyarısı: {e_load}")
+
+        # 2. Aşama (Garantili Yedek): Eğer STEP üzerinden yüklenemediyse Binary STL üzerinden yükle
+        if model_doc is None and fallback_mesh is not None:
+            try:
+                fallback_mesh.export(str(tmp_stl))
+                imp_var = VARIANT(pythoncom.VT_DISPATCH, None)
+                err_var = VARIANT(pythoncom.VT_BYREF | pythoncom.VT_I4, 0)
+                model_doc = sw_app.LoadFile4(str(tmp_stl), "r", imp_var, err_var)
+            except Exception as e_stl:
+                warnings.append(f"SolidWorks STL yedek yükleme uyarısı: {e_stl}")
 
         if model_doc is not None:
-            # .SLDPRT olarak kaydet
+            # .SLDPRT olarak kaydet (önce ASCII temp yola kaydet, sonra Unicode hedefe kopyala)
             if out_sldprt_path:
                 abs_sldprt = str(Path(out_sldprt_path).resolve())
                 Path(abs_sldprt).parent.mkdir(parents=True, exist_ok=True)
-                if Path(abs_sldprt).exists():
-                    try:
-                        Path(abs_sldprt).unlink()
-                    except Exception:
-                        pass
                 try:
-                    # SaveAs3(Name, Version=0, Options=1 [swSaveAsOptions_Silent])
-                    res = model_doc.SaveAs3(abs_sldprt, 0, 1)
+                    res = model_doc.SaveAs3(str(tmp_sldprt), 0, 1)
                 except Exception:
                     try:
-                        res = model_doc.SaveAs(abs_sldprt)
+                        res = model_doc.SaveAs(str(tmp_sldprt))
                     except Exception as e_save:
                         res = -1
                         warnings.append(f"SLDPRT kaydetme uyarısı: {e_save}")
-                if Path(abs_sldprt).exists():
+
+                if tmp_sldprt.exists():
+                    shutil.copy2(str(tmp_sldprt), abs_sldprt)
                     saved["sldprt"] = abs_sldprt
                 else:
                     warnings.append(f".sldprt dosyası kaydedilemedi (SolidWorks dönüş kodu: {res}).")
@@ -1014,42 +1042,41 @@ def convert_with_solidworks(
             if out_prt_path:
                 abs_prt = str(Path(out_prt_path).resolve())
                 Path(abs_prt).parent.mkdir(parents=True, exist_ok=True)
-                if Path(abs_prt).exists():
-                    try:
-                        Path(abs_prt).unlink()
-                    except Exception:
-                        pass
                 try:
-                    model_doc.SaveAs3(abs_prt, 0, 1)
+                    model_doc.SaveAs3(str(tmp_prt), 0, 1)
                 except Exception:
                     try:
-                        model_doc.SaveAs(abs_prt)
+                        model_doc.SaveAs(str(tmp_prt))
                     except Exception:
                         pass
 
-                # Eğer SolidWorks sürümü doğrudan .prt uzantılı dışa aktarmayı desteklemiyorsa,
-                # yerel .sldprt veya .step tabanlı CAD part kopyasını .prt olarak hazırla
-                if not Path(abs_prt).exists():
-                    if out_sldprt_path and Path(out_sldprt_path).exists():
-                        shutil.copy2(out_sldprt_path, abs_prt)
-                    elif Path(abs_step).exists():
-                        shutil.copy2(abs_step, abs_prt)
+                if tmp_prt.exists():
+                    shutil.copy2(str(tmp_prt), abs_prt)
+                elif out_sldprt_path and Path(out_sldprt_path).exists():
+                    shutil.copy2(out_sldprt_path, abs_prt)
+                elif Path(abs_step).exists():
+                    shutil.copy2(abs_step, abs_prt)
+
                 if Path(abs_prt).exists():
                     saved["prt"] = abs_prt
 
+            # Arka plandaki geçici belgeyi kapat
+            try:
+                doc_title = model_doc.GetTitle() if callable(getattr(model_doc, "GetTitle", None)) else model_doc.GetTitle
+                sw_app.CloseDoc(doc_title)
+            except Exception:
+                pass
+
             if open_after:
+                target_open = saved.get("sldprt") or abs_step
                 sw_app.Visible = True
                 try:
-                    sw_app.UserControl = True
-                    model_doc.Visible = True
-                    model_doc.ViewZoomtofit2()
-                except Exception:
-                    pass
-            else:
-                # Kullanıcı "SolidWorks'te Aç" istemediyse arka plandaki belgeyi kapat
-                try:
-                    doc_title = model_doc.GetTitle() if callable(getattr(model_doc, "GetTitle", None)) else model_doc.GetTitle
-                    sw_app.CloseDoc(doc_title)
+                    err_var = VARIANT(pythoncom.VT_BYREF | pythoncom.VT_I4, 0)
+                    warn_var = VARIANT(pythoncom.VT_BYREF | pythoncom.VT_I4, 0)
+                    opened_doc = sw_app.OpenDoc6(target_open, 1, 0, "", err_var, warn_var)
+                    if opened_doc:
+                        opened_doc.Visible = True
+                        opened_doc.ViewZoomtofit2()
                 except Exception:
                     pass
         else:
@@ -1073,6 +1100,12 @@ def convert_with_solidworks(
             shutil.copy2(step_path, out_prt_path)
             saved["prt"] = str(Path(out_prt_path).resolve())
     finally:
+        for tf in (tmp_step, tmp_stl, tmp_sldprt, tmp_prt):
+            try:
+                if tf.exists():
+                    tf.unlink()
+            except Exception:
+                pass
         try:
             pythoncom.CoUninitialize()
         except Exception:
@@ -1146,7 +1179,10 @@ def convert_cad_file(
 
     def notify(msg: str, pct: float):
         if progress_callback:
-            progress_callback(msg, pct)
+            try:
+                progress_callback(msg, pct)
+            except Exception:
+                pass
 
     in_path = Path(input_path).resolve()
     if not in_path.exists():
@@ -1166,7 +1202,13 @@ def convert_cad_file(
         orig_tris = len(mesh.faces)
 
         notify(f"🔧 Mesh temizleniyor ({orig_tris:,} üçgen)...", 0.25)
-        vertices, faces, is_watertight = clean_and_prepare_mesh(mesh, max_faces=options.max_faces)
+        # Çok yüksek poligonlu organik modellerde SolidWorks'ün hızlıca .SLDPRT katı/yüzey gövdesi
+        # oluşturabilmesi için hedef üçgen sayısını optimize et
+        effective_max_faces = options.max_faces
+        if orig_tris > 6000 and (options.export_sldprt or options.export_prt):
+            effective_max_faces = min(options.max_faces if options.max_faces > 0 else 4500, 4500)
+
+        vertices, faces, is_watertight = clean_and_prepare_mesh(mesh, max_faces=effective_max_faces)
         proc_tris = len(faces)
 
         if options.merge_coplanar:
@@ -1205,6 +1247,7 @@ def convert_cad_file(
         # SolidWorks (.sldprt / .prt) dönüşümü
         if options.export_sldprt or options.export_prt or options.open_in_solidworks_after:
             notify("⚙️ SolidWorks üzerinden .SLDPRT ve .PRT oluşturuluyor...", 0.82)
+            fallback_trimesh = trimesh.Trimesh(vertices=vertices, faces=faces, process=False)
             sw_saved, sw_warns = convert_with_solidworks(
                 step_path=str(step_path),
                 stl_source_path=str(in_path) if in_path.suffix.lower() == ".stl" else None,
@@ -1212,6 +1255,7 @@ def convert_cad_file(
                 out_prt_path=str(prt_path) if prt_path else None,
                 open_after=options.open_in_solidworks_after,
                 import_mode=options.solidworks_import_mode,
+                fallback_mesh=fallback_trimesh,
             )
             output_files.update(sw_saved)
             warnings.extend(sw_warns)
